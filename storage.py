@@ -1,12 +1,8 @@
 import configparser
 import math
-import os.path
-import pickle
-from typing import Any
+import gspread
 
-from googleapiclient.discovery import build
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
+from gspread.utils import ValueInputOption
 
 from extractions import ExtractionLine
 
@@ -29,43 +25,34 @@ class Storage:
         pass
 
 
-def get_credentials(file, scopes) -> Any:
-    credentials = None
-    dir_path = os.path.dirname(os.path.realpath(file))
-    if os.path.exists(dir_path + '/token.pickle'):
-        with open(dir_path + '/token.pickle', 'rb') as token:
-            credentials = pickle.load(token)
-    if not credentials or not credentials.valid:
-        if credentials and credentials.expired and credentials.refresh_token:
-            credentials.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(file, scopes=scopes)
-            credentials = flow.run_local_server(port=0)
-        with open(dir_path + '/token.pickle', 'wb') as token:
-            pickle.dump(credentials, token)
-    return credentials
-
-
-DISCOVERY_SERVICE_URL = 'https://sheets.googleapis.com/$discovery/rest?version=v4'
-
-
 class GoogleSpreadsheetStorage(Storage):
     def __init__(self, config: configparser.ConfigParser) -> None:
         super().__init__(config)
+        if config.has_section('CREDENTIALS'): 
+            self.credentials_file = config['CREDENTIALS']['file'] if config.has_option('CREDENTIALS', 'file') else ''
+        else:
+            error_msg = f'There is no CREDENTIALS section in config file.'
+            print(f'{Style.RED}{Style.BOLD}Error:{Style.ENDC}{Style.RED} {error_msg}{Style.ENDC}')
+            return
         if config.has_section('GOOGLE_SPREADSHEET'):
-            SHEETS_READ_WRITE_SCOPE = 'https://www.googleapis.com/auth/spreadsheets'
-            SCOPES = [SHEETS_READ_WRITE_SCOPE]
-            self.spreadsheet_id = (
-                config['GOOGLE_SPREADSHEET']['id'] if config.has_option('GOOGLE_SPREADSHEET', 'id') else ''
-            )
-            credential_file = (
-                config['CREDENTIALS']['file'] if config.has_option('CREDENTIALS', 'file') else ''
-            )
-            self.credentials = get_credentials(credential_file, SCOPES)
-            self.sheet = (
-                config['GOOGLE_SPREADSHEET']['sheet'] if config.has_option('GOOGLE_SPREADSHEET', 'sheet') else ''
-            )
-            self.__read_lines()
+            self.spreadsheet_name = config['GOOGLE_SPREADSHEET']['name'] if config.has_option('GOOGLE_SPREADSHEET', 'name') else ''
+            self.worksheet_name = config['GOOGLE_SPREADSHEET']['worksheet'] if config.has_option('GOOGLE_SPREADSHEET', 'worksheet') else ''
+            try:
+                self.service = gspread.service_account(filename=self.credentials_file)
+            except Exception as ex:
+                error_msg = f'Could not start the service :: {ex}'
+                print(f'{Style.RED}{Style.BOLD}Error:{Style.ENDC}{Style.RED} {error_msg}{Style.ENDC}')
+            try:
+                self.spreadsheet = self.service.open(self.spreadsheet_name)
+            except Exception as ex:
+                error_msg = f'Could not open the spreadsheet :: {ex}'
+                print(f'{Style.RED}{Style.BOLD}Error:{Style.ENDC}{Style.RED} {error_msg}{Style.ENDC}')
+            try:
+                self.worksheet = self.spreadsheet.worksheet(self.worksheet_name)
+                self.__read_lines()
+            except Exception as ex:
+                error_msg = f'Could not read the data :: {ex}'
+                print(f'{Style.RED}{Style.BOLD}Error:{Style.ENDC}{Style.RED} {error_msg}{Style.ENDC}')
         else:
             error_msg = f'There is no GOOGLE_SPREADSHEET section in config file.'
             print(f'{Style.RED}{Style.BOLD}Error:{Style.ENDC}{Style.RED} {error_msg}{Style.ENDC}')
@@ -73,25 +60,17 @@ class GoogleSpreadsheetStorage(Storage):
     def save(self, data: list[ExtractionLine]) -> None:
         to_add: list[list[str]] = []
         for row in data:
+            print(row)
             if self.__row_exists(row):
                 tmp = [
-                    row.date.strftime('%Y-%m-%d'),  # Date
-                    row.description,  # Description
-                    '',  # category
-                    '' if math.isnan(row.income) else row.income,  # Income
-                    '' if math.isnan(row.debit) else row.debit  # Debit
+                    row.date.strftime('%Y-%m-%d'), # Date
+                    row.description, # Description
+                    '', # Category
+                    '' if math.isnan(row.income) else row.income, # Income
+                    '' if math.isnan(row.debit) else row.debit # Debit
                 ]
                 to_add.append(tmp)
-        service = build('sheets', 'v4', credentials=self.credentials, discoveryServiceUrl=DISCOVERY_SERVICE_URL)
-        service.spreadsheets().values().append(
-            spreadsheetId=self.spreadsheet_id,
-            range=self.sheet + '!A:Z',
-            body={
-                'majorDimension': 'ROWS',
-                'values': to_add
-            },
-            valueInputOption='USER_ENTERED'
-        ).execute()
+        self.worksheet.append_rows(to_add, ValueInputOption.user_entered)
 
     def __row_exists(self, row: ExtractionLine) -> bool:
         for line in self.values:
@@ -100,20 +79,15 @@ class GoogleSpreadsheetStorage(Storage):
                     row.date.strftime('%Y-%m-%d') == line[0] and
                     row.description == line[1] and
                     not (row.debit if not math.isnan(row.debit) else '') != (
-                            line[4] if line[4] == '' else float(line[4][1:])) and
+                            line[4] if line[4] == '' else float(line[4][1:].replace(',',''))) and
                     not (row.income if not math.isnan(row.income) else '') != (
-                            line[3] if line[3] == '' else float(line[3][1:]))
+                            line[3] if line[3] == '' else float(line[3][1:].replace(',','')))
             ):
                 return False
         return True
 
     def __read_lines(self) -> None:
-        service = build('sheets', 'v4', credentials=self.credentials, discoveryServiceUrl=DISCOVERY_SERVICE_URL)
-        result = service.spreadsheets().values().get(
-            spreadsheetId=self.spreadsheet_id,
-            range=self.sheet + '!A2:Z'
-        ).execute()
-        self.values = result.get('values', [])
+        self.values = self.worksheet.get_values()[1:]
 
 
 def storage(storage_type: int, config: configparser.ConfigParser):

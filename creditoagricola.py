@@ -10,7 +10,7 @@ class CAExtraction(Extraction):
         self.data = []
 
     def load_extraction(self, file: str) -> None:
-        excel_data = pd.read_excel(file, skiprows=5, skipfooter=3)
+        excel_data = pd.read_excel(file, skiprows=5, skipfooter=3, parse_dates=[0])
         data = pd.DataFrame(excel_data)
         self.temp_data = data.values.tolist()
 

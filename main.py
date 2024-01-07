@@ -1,12 +1,14 @@
 import argparse
 import os
+from pathlib import Path
 import sys
+
 import extract
 import configparser
 import storage as stg
 from extractions import ExtractionLine
 
-__version__ = '0.1'
+__version__ = '1.1'
 
 
 class Style:
@@ -28,7 +30,7 @@ def process_arguments():
     )
     parser.add_argument('file_path', type=str, help='path to the excel file with extraction')
     parser.add_argument('-v', '--version', action='version', version='%(prog)s ' + __version__, help='show version')
-    parser.add_argument('-c', '--config', action='store', dest='config', help='path to configuration file')
+    parser.add_argument('-c', '--config', action='store', dest='config', help='path to configuration file', default=f'{str(Path.home())}/.personalfinances/personalfinances.config')
     args = parser.parse_args()
     return vars(args)
 

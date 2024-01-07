@@ -1,7 +1,2 @@
-pandas~=1.5.3
-openpyxl
-google-api-python-client
-google-auth-httplib2
-google-auth-oauthlib
-google~=3.0.0
-pyinstaller
+gspread==5.12.4
+pandas==1.5.3
